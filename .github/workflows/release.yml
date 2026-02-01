@@ -1,0 +1,118 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+b[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update version from git tag
+        run: ./.github/scripts/update-version.sh
+
+      - name: Build universal binary
+        run: |
+          swift build -c release --arch arm64 --arch x86_64
+          mkdir -p ./build
+          cp .build/apple/Products/Release/SRT2Text ./build/SRT2Text
+
+      - name: Create tarball and SHA256
+        run: |
+          cd ./build
+          tar -czf srt2text-macos.tar.gz SRT2Text
+          shasum -a 256 srt2text-macos.tar.gz | tee srt2text-macos.tar.gz.sha256
+          mv srt2text-macos.tar.gz $GITHUB_WORKSPACE/
+          mv srt2text-macos.tar.gz.sha256 $GITHUB_WORKSPACE/
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: |
+            srt2text-macos.tar.gz
+            srt2text-macos.tar.gz.sha256
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    container: "swift:6.2.3-noble"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update version from git tag
+        run: ./.github/scripts/update-version.sh
+
+      - name: Show Swift Version
+        run: swift --version
+
+      - name: Install Static Linux Swift SDK
+        run: |
+          swift sdk install https://download.swift.org/swift-6.2.3-release/static-sdk/swift-6.2.3-RELEASE/swift-6.2.3-RELEASE_static-linux-0.0.1.artifactbundle.tar.gz --checksum f30ec724d824ef43b5546e02ca06a8682dafab4b26a99fbb0e858c347e507a2c
+
+      - name: Build for Linux with Static SDK
+        run: |
+          swift build -c release --swift-sdk x86_64-swift-linux-musl
+
+      - name: Create tarball and SHA256
+        run: |
+          BUILD_DIR=$(swift build -c release --swift-sdk x86_64-swift-linux-musl --show-bin-path)
+          cd $BUILD_DIR
+          tar -czf srt2text-linux.tar.gz SRT2Text
+          shasum -a 256 srt2text-linux.tar.gz | tee srt2text-linux.tar.gz.sha256
+          mv srt2text-linux.tar.gz $GITHUB_WORKSPACE/
+          mv srt2text-linux.tar.gz.sha256 $GITHUB_WORKSPACE/
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: |
+            srt2text-linux.tar.gz
+            srt2text-linux.tar.gz.sha256
+
+  release:
+    needs: [build-macos, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-build
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            srt2text-macos.tar.gz
+            srt2text-macos.tar.gz.sha256
+            srt2text-linux.tar.gz
+            srt2text-linux.tar.gz.sha256
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Release ${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
