@@ -5,6 +5,9 @@ import PackageDescription
 
 let package = Package(
     name: "SRT2Text",
+	platforms: [
+		.macOS(.v13)
+	],
 	products: [
 		.executable(name: "SRT2Text", targets: ["SRT2Text"]),
 		.library(name: "SRT2TextLib", targets: ["SRT2TextLib"]),
